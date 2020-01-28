@@ -1,0 +1,22 @@
+regions: regions.bed
+samples:    
+#hg0731: results/hg0731.bam
+#   hg0732: results/hg0732.bam 
+#   hg0733: results/hg0733.bam
+
+
+#   hg002: results/hg002.bam
+
+    chimp: results/chimp.bam
+
+    chm1:  results/chm1.bam
+    chm13: results/chm13.bam
+    chm1_and_chm13:
+        - results/chm1.bam
+        - results/chm13.bam 
+
+
+#   14455.fa: results/14455.fa.bam
+#   14455.mo: results/14455.mo.bam
+#   14455.p1: results/14455.p1.bam
+#   14455.s1: results/14455.s1.bam
