@@ -13,5 +13,6 @@ minovls:
     - 2000
 chm13:
     fofn: /net/eichler/vol27/projects/sequence_data/nobackups/human/CHM13/PacBioHiFi/20_kbp_insert_hifi_beta/fastq.fofn
-
+chm1:
+    fofn: /net/eichler/vol27/projects/sequence_data/nobackups/human/CHM1/PacBioHiFi/chm1_10kbp_hifi.fofn
 ```
