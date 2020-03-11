@@ -233,6 +233,7 @@ rule rename_asm:
 
 rule plots:
 	input:
+		fastq =	rules.fastq.output.fastq,
 		fasta = rules.rename_asm.output.fasta,
 		fai   = rules.rename_asm.output.fai,
 		outdir = rules.rename_asm.output.outdir, 
@@ -251,10 +252,12 @@ rule plots:
 
 			shell(f"""pbmm2 align --log-level DEBUG --preset SUBREAD --min-length 5000 -j {threads} \
 				{contig} {read} | samtools view -F 2308 -u - | samtools sort - > {bam} """)
-			shell(f"samtools index {bam} && NucPlot.py {bam} {png}")
+			shell(f"samtools index {bam} && NucPlot.py --soft -c 100 {bam} {png}")
 	
-		shell("samtools merge {output.bam} {input.outdir}/*.bam && samtools index {output.bam}")
-		shell("NucPlot.py --soft -c 100 {output.bam} {output.png}")	
+		#shell("samtools merge {output.bam} {input.outdir}/*.bam && samtools index {output.bam}")
+		shell("""pbmm2 align --log-level DEBUG --preset SUBREAD --min-length 5000 -j {threads} \
+			{input.fasta} {input.fastq} | samtools view -F 2308 -u - | samtools sort - > {output.bam}""")
+		shell("samtools index {output.bam} && NucPlot.py --soft -c 100 {output.bam} {output.png}")
 
 rule stats:	
 	input:
