@@ -6,7 +6,9 @@ import re
 import tempfile
 import glob
 
-shell.prefix("set -eo pipefail; ")
+SCRIPTS = os.path.dirname(workflow.snakefile) + "/scripts"
+ENV = os.path.dirname(workflow.snakefile) + "/env.cfg"
+shell.prefix("source {ENV}; set -eo pipefail; ")
 
 # set the tmp dir
 SSD_TMP_DIR = "/data/scratch/ssd"
@@ -18,6 +20,7 @@ elif os.path.exists(SSD_TMP_DIR):
 	TMPDIR = SSD_TMP_DIR
 else:
     TMPDIR = tempfile.gettempdir()
+
 
 
 configfile: "targeted_hifi_asm.yaml"
@@ -252,12 +255,12 @@ rule plots:
 
 			shell(f"""pbmm2 align --log-level DEBUG --preset SUBREAD --min-length 5000 -j {threads} \
 				{contig} {read} | samtools view -F 2308 -u - | samtools sort - > {bam} """)
-			shell(f"samtools index {bam} && NucPlot.py --soft -c 100 {bam} {png}")
+			shell(f"samtools index {bam} && {SCRIPTS}/NucPlot.py --soft -c 100 {bam} {png}")
 	
 		#shell("samtools merge {output.bam} {input.outdir}/*.bam && samtools index {output.bam}")
 		shell("""pbmm2 align --log-level DEBUG --preset SUBREAD --min-length 5000 -j {threads} \
 			{input.fasta} {input.fastq} | samtools view -F 2308 -u - | samtools sort - > {output.bam}""")
-		shell("samtools index {output.bam} && NucPlot.py --soft -c 100 {output.bam} {output.png}")
+		shell("samtools index {output.bam} && {SCRIPTS}/NucPlot.py --soft -c 100 {output.bam} {output.png}")
 
 rule stats:	
 	input:
