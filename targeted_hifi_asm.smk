@@ -34,7 +34,21 @@ SMS=list(config.keys())
 REF=config["ref"]; SMS.remove("ref")
 
 # define the regions 
-regions = { "_".join(line.strip().split()) : "{}:{}-{}".format(*line.strip() .split()) for line in open(config["regions"]) }
+#regions = { "_".join(line.strip().split()) : "{}:{}-{}".format(*line.strip() .split()) for line in open(config["regions"]) }
+regions = {}
+for line in open(config["regions"]):
+	t = line.strip().split()
+	if(len(t) != 4):
+		key = "_".join(t)
+	else:
+		key = t[3]	
+	regions.setdefault(key, [])
+	regions[key].append( (t[0], int(t[1]), int(t[2])) )
+
+print(regions)
+
+
+
 RGNS = list(regions.keys())
 SMS.remove("regions")
 
@@ -129,7 +143,11 @@ samtools merge -@ {threads} {output.bam} {input.bams} && samtools index {output.
 # Get fastq input by region and sample 
 #
 def get_rgn(wildcards):
-	return( regions[str(wildcards.RGN)] )
+	rgns = regions[str(wildcards.RGN)] 
+	rtn = ""
+	for rgn in rgns: rtn += "'{}:{}-{}' ".format(*rgn)
+	return(rtn) 
+		
 
 rule fastq:
 	input:
@@ -141,7 +159,8 @@ rule fastq:
 	params:
 		rgn = get_rgn,
 	shell:"""
-samtools merge -R '{params.rgn}' {output.bam} {input.bam}
+#samtools merge -R {params.rgn} {output.bam} {input.bam}
+samtools view -b {input.bam} {params.rgn} > {output.bam}
 samtools fastq {output.bam} > {output.fastq}
 """
 
@@ -151,9 +170,10 @@ samtools fastq {output.bam} > {output.fastq}
 # 
 def get_region_size(wildcards):
 	RGN = str(wildcards.RGN)	
-	tokens = RGN.split("_")
-	length = int(tokens[-1]) - int(tokens[-2])
-	return(int(length))
+	size = 0 
+	for rgn in regions[RGN]:
+		size += rgn[2] - rgn[1]
+	return(int(size))
 
 def get_min_ovl(wildcards):
 	return(str(wildcards.MIN_OVL).lstrip("0") )
