@@ -34,7 +34,6 @@ SMS=list(config.keys())
 REF=config["ref"]; SMS.remove("ref")
 
 # define the regions 
-#regions = { "_".join(line.strip().split()) : "{}:{}-{}".format(*line.strip() .split()) for line in open(config["regions"]) }
 regions = {}
 for line in open(config["regions"]):
 	t = line.strip().split()
@@ -44,6 +43,7 @@ for line in open(config["regions"]):
 		key = t[3]	
 	regions.setdefault(key, [])
 	regions[key].append( (t[0], int(t[1]), int(t[2])) )
+	
 
 print(regions)
 
@@ -170,10 +170,11 @@ samtools fastq {output.bam} > {output.fastq}
 # 
 def get_region_size(wildcards):
 	RGN = str(wildcards.RGN)	
-	size = 0 
+	mmax = 0
 	for rgn in regions[RGN]:
-		size += rgn[2] - rgn[1]
-	return(int(size))
+		tmp = rgn[2] - rgn[1]
+		if(tmp > mmax): mmax = tmp
+	return(mmax)
 
 def get_min_ovl(wildcards):
 	return(str(wildcards.MIN_OVL).lstrip("0") )
