@@ -319,7 +319,7 @@ rule best_dot_plot:
 	output:
 		pdf = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.pdf",
 	shell:"""
-python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotplots/dotplots/DotplotMain.py -t \
+python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotplots/dotplots/DotplotMain.py \
    	{input.fasta} -o {output.pdf} -w 100
 """
 
