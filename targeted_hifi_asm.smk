@@ -5,6 +5,7 @@ import itertools
 import re
 import tempfile
 import glob
+import pandas as pd
 
 SCRIPTS = os.path.dirname(workflow.snakefile) + "/scripts"
 ENV = os.path.dirname(workflow.snakefile) + "/env.cfg"
@@ -45,8 +46,6 @@ for line in open(config["regions"]):
 	regions[key].append( (t[0], int(t[1]), int(t[2])) )
 	
 
-print(regions)
-
 
 
 RGNS = list(regions.keys())
@@ -76,6 +75,11 @@ for SM in SMS:
 		FOFN_SMS.append(SM)
 		READ_SMS[SM] = [line.strip() for line in open(config[SM]["fofn"]).readlines()]
 
+# function that keeps temp files if in DEBUG mode
+DEBUG=True
+def tempd(f):
+	if(DEBUG): return(f)
+	return(temp(f))
 
 wildcard_constraints:
 	SM="|".join(SMS),
@@ -154,8 +158,8 @@ rule fastq:
 		bam=rules.merge.output.bam,
 		bai=rules.merge.output.bai,
 	output:
-		bam=temp("Targeted_HiFi_Asm/asm/{RGN}/{SM}.bam"),
-		fastq=temp("Targeted_HiFi_Asm/asm/{RGN}/{SM}.fastq"),
+		bam=tempd("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.bam"),
+		fastq=tempd("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.fastq"),
 	params:
 		rgn = get_rgn,
 	shell:"""
@@ -213,9 +217,9 @@ rule rename_asm:
 		readNames = rules.canu_asm.output.readNames,
 		readToTig = rules.canu_asm.output.readToTig,
 	output:
-		fasta = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.{MIN_OVL}.contigs.fasta",
-		fai =   "Targeted_HiFi_Asm/asm/{RGN}/{SM}.{MIN_OVL}.contigs.fasta.fai",
-		outdir = directory("Targeted_HiFi_Asm/asm/{RGN}/{SM}.{MIN_OVL}/"),
+		fasta = "Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.contigs.fasta",
+		fai =   "Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.contigs.fasta.fai",
+		outdir = directory("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}/"),
 	run:
 		# get reads
 		recs = SeqIO.to_dict(SeqIO.parse(input["fastq"], "fastq"))
@@ -262,9 +266,9 @@ rule plots:
 		fai   = rules.rename_asm.output.fai,
 		outdir = rules.rename_asm.output.outdir, 
 	output:
-		png = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.{MIN_OVL}.plots.png",
-		bam = temp("Targeted_HiFi_Asm/asm/{RGN}/{SM}.{MIN_OVL}.plots.bam"),
-		bai = temp("Targeted_HiFi_Asm/asm/{RGN}/{SM}.{MIN_OVL}.plots.bam.bai"),
+		png = "Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.png",
+		bam = temp("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.bam"),
+		bai = temp("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.bam.bai"),
 	threads: int(THREADS/4)
 	run:
 		reads = glob.glob(input["outdir"] + "/*.reads.fastq")
@@ -276,17 +280,57 @@ rule plots:
 
 			shell(f"""pbmm2 align --log-level DEBUG --preset SUBREAD --min-length 5000 -j {threads} \
 				{contig} {read} | samtools view -F 2308 -u - | samtools sort - > {bam} """)
-			shell(f"samtools index {bam} && {SCRIPTS}/NucPlot.py --soft -c 100 {bam} {png}")
+			shell(f"samtools index {bam} && {SCRIPTS}/NucPlot.py --height 5 --soft -c 100 {bam} {png}")
 	
 		#shell("samtools merge {output.bam} {input.outdir}/*.bam && samtools index {output.bam}")
 		shell("""pbmm2 align --log-level DEBUG --preset SUBREAD --min-length 5000 -j {threads} \
 			{input.fasta} {input.fastq} | samtools view -F 2308 -u - | samtools sort - > {output.bam}""")
-		shell("samtools index {output.bam} && {SCRIPTS}/NucPlot.py --soft -c 100 {output.bam} {output.png}")
+		shell("samtools index {output.bam} && {SCRIPTS}/NucPlot.py --height 5 --soft -c 100 {output.bam} {output.png}")
+
+
+rule pick_best_asm:
+	input:
+		fasta = expand("Targeted_HiFi_Asm/asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.contigs.fasta", MIN_OVL=MIN_OVLS),
+		fai = expand("Targeted_HiFi_Asm/asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.contigs.fasta.fai", MIN_OVL=MIN_OVLS),
+		png = expand("Targeted_HiFi_Asm/asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.plots.png", MIN_OVL=MIN_OVLS),
+	output:
+		fasta = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.best.contigs.fasta",
+		fai = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.best.contigs.fasta.fai",
+		png = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.best.plots.png",
+	threads: 1
+	run:
+		best=None
+		bestscore = 0
+		for fasta, fai, png in zip(input["fasta"], input["fai"], input["png"]):
+			df = pd.read_csv(fai, header=None, sep="\t")
+			score = sum(df[1])/len(df[1])		
+			if(score > bestscore):
+				best = (fasta, fai, png)
+				bestscore=score
+			print(score, fasta)
+		print(best, fasta)
+		shell(f"ln {best[0]} {{output.fasta}}")
+		shell(f"ln {best[1]} {{output.fai}}")
+		shell(f"ln {best[2]} {{output.png}}")
+
+rule best_dot_plot:
+	input:
+		fasta = rules.pick_best_asm.output.fasta,
+	output:
+		pdf = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.pdf",
+	shell:"""
+python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotplots/dotplots/DotplotMain.py -t \
+   	{input.fasta} -o {output.pdf} -w 100
+"""
+
+
 
 rule stats:	
 	input:
-		fai = expand(rules.rename_asm.output.fai, SM=SMS, RGN=RGNS, MIN_OVL=MIN_OVLS),
-		plots = expand(rules.plots.output.png, SM=SMS, RGN=RGNS, MIN_OVL=MIN_OVLS),
+		fasta = expand(rules.pick_best_asm.output.fasta, SM=SMS, RGN=RGNS),
+		fai = expand(rules.pick_best_asm.output.fai, SM=SMS, RGN=RGNS),
+		png = expand(rules.pick_best_asm.output.png, SM=SMS, RGN=RGNS),
+		pdf = expand(rules.best_dot_plot.output.pdf, SM=SMS, RGN=RGNS)
 	output:
 		"Targeted_HiFi_Asm/assembly.stats.txt",
 	shell:"""
