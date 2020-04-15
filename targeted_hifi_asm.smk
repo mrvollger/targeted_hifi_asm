@@ -110,13 +110,13 @@ rule align:
         benchmark:
                 "Targeted_HiFi_Asm/logs/align_{SM}_{ID}.b"
         resources:
-                mem = 8,
+                mem = 4,
                 smem = 4
         threads: THREADS
         shell:"""
 SAM_TMP="{TMPDIR}/temp_{wildcards.SM}_{wildcards.ID}"
 rm -f $SAM_TMP*
-pbmm2 align --log-level DEBUG --preset SUBREAD -j {threads} {input.ref} {input.reads} | samtools view -F 260 -u - | samtools sort -T $SAM_TMP -m {resources.smem}G -@ {threads} - > {output.bam} 
+pbmm2 align --unmapped --log-level DEBUG --preset SUBREAD -j {threads} {input.ref} {input.reads} | samtools view -F 256 -u - | samtools sort -T $SAM_TMP -m {resources.smem}G -@ {threads} - > {output.bam} 
 """
 
 
@@ -137,9 +137,25 @@ rule merge:
 		bai="Targeted_HiFi_Asm/alignments/{SM}.bam.bai",
 	benchmark:
 		"Targeted_HiFi_Asm/logs/merge_{SM}.b"
+	resources:
+		mem = 2,
 	threads: min(16, THREADS)
 	shell:"""
 samtools merge -@ {threads} {output.bam} {input.bams} && samtools index {output.bam}
+"""
+
+
+rule make_alns:
+	input:
+		bams=expand(rules.merge.output.bam,SM=SMS),
+		bais=expand(rules.merge.output.bai,SM=SMS),
+	output:
+		done="Targeted_HiFi_Asm/alignments/done.txt",
+	resources:
+		mem = 2,
+	threads: 1
+	shell:"""
+touch {output.done}
 """
 
 
