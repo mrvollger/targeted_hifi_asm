@@ -110,7 +110,7 @@ rule align:
         benchmark:
                 "Targeted_HiFi_Asm/logs/align_{SM}_{ID}.b"
         resources:
-                mem = 4,
+                mem = 8,
                 smem = 4
         threads: THREADS
         shell:"""
@@ -171,8 +171,8 @@ def get_rgn(wildcards):
 
 rule fastq:
 	input:
-		bam=rules.merge.output.bam,
-		bai=rules.merge.output.bai,
+		bam=ancient(rules.merge.output.bam),
+		bai=ancient(rules.merge.output.bai),
 	output:
 		bam=tempd("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.bam"),
 		fastq=tempd("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.fastq"),
