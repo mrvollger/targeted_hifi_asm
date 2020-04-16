@@ -133,8 +133,8 @@ rule merge:
 	input:
 		bams = get_bams,
 	output:
-		bam="Targeted_HiFi_Asm/alignments/{SM}.bam",
-		bai="Targeted_HiFi_Asm/alignments/{SM}.bam.bai",
+		bam=protected("Targeted_HiFi_Asm/alignments/{SM}.bam"),
+		bai=protected("Targeted_HiFi_Asm/alignments/{SM}.bam.bai"),
 	benchmark:
 		"Targeted_HiFi_Asm/logs/merge_{SM}.b"
 	resources:
