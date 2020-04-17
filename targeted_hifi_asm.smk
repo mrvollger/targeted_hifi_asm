@@ -37,6 +37,8 @@ REF=config["ref"]; SMS.remove("ref")
 # define the regions 
 regions = {}
 for line in open(config["regions"]):
+	if(line[0] == "#"):
+		continue 
 	t = line.strip().split()
 	if(len(t) != 4):
 		key = "_".join(t)
