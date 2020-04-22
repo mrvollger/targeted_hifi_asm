@@ -192,11 +192,12 @@ samtools fastq {output.bam} > {output.fastq}
 # 
 def get_region_size(wildcards):
 	RGN = str(wildcards.RGN)	
-	mmax = 0
+	total = 0
 	for rgn in regions[RGN]:
 		tmp = rgn[2] - rgn[1]
-		if(tmp > mmax): mmax = tmp
-	return(mmax)
+		#if(tmp > mmax): mmax = tmp
+		total += tmp
+	return(total)
 
 def get_min_ovl(wildcards):
 	return(str(wildcards.MIN_OVL).lstrip("0") )
