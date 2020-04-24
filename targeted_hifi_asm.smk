@@ -53,6 +53,14 @@ for line in open(config["regions"]):
 RGNS = list(regions.keys())
 SMS.remove("regions")
 
+#
+# setup working dir
+#
+OUTDIR="Targeted_HiFi_Asm"
+if("outdir" in SMS): OUTDIR=config["outdir"]; SMS.remove("outdir")
+workdir: OUTDIR
+
+
 # set up max threads
 THREADS=16 
 if("threads" in SMS): THREADS=config["threads"]; SMS.remove("threads")
@@ -93,7 +101,7 @@ wildcard_constraints:
 
 rule all:
 	input:
-		"Targeted_HiFi_Asm/assembly.stats.txt",
+		"assembly.stats.txt",
 
 #
 # Align the reads
@@ -108,9 +116,9 @@ rule align:
                 ref=REF,
                 reads=get_read,
         output:
-                bam=temp("Targeted_HiFi_Asm/temp/{SM}_{ID}.bam"),
+                bam=temp("temp/{SM}_{ID}.bam"),
         benchmark:
-                "Targeted_HiFi_Asm/logs/align_{SM}_{ID}.b"
+                "logs/align_{SM}_{ID}.b"
         resources:
                 mem = 8,
                 smem = 4
@@ -128,17 +136,17 @@ pbmm2 align --unmapped --log-level DEBUG --preset SUBREAD -j {threads} {input.re
 def get_bams(wildcards):
         SM = str(wildcards.SM)
         IDS = list(range(len(READ_SMS[SM])))
-        bams = expand("Targeted_HiFi_Asm/temp/" + SM + "_{ID}.bam", ID=IDS)
+        bams = expand("temp/" + SM + "_{ID}.bam", ID=IDS)
         return(bams)
 
 rule merge:
 	input:
 		bams = get_bams,
 	output:
-		bam=protected("Targeted_HiFi_Asm/alignments/{SM}.bam"),
-		bai=protected("Targeted_HiFi_Asm/alignments/{SM}.bam.bai"),
+		bam=protected("alignments/{SM}.bam"),
+		bai=protected("alignments/{SM}.bam.bai"),
 	benchmark:
-		"Targeted_HiFi_Asm/logs/merge_{SM}.b"
+		"logs/merge_{SM}.b"
 	resources:
 		mem = 2,
 	threads: min(16, THREADS)
@@ -146,13 +154,33 @@ rule merge:
 samtools merge -@ {threads} {output.bam} {input.bams} && samtools index {output.bam}
 """
 
+rule get_coverage:
+	input:
+		bam = rules.merge.output.bam,
+		bai = rules.merge.output.bai,
+		fai = REF + ".fai",
+	output:
+		cov = protected("alignments/{SM}.coverage.tbl"),
+	benchmark:
+		"logs/coverage_{SM}.b"
+	resources:
+		mem = 8,
+	threads: 1
+	shell:"""
+bedtools coverage -bed -mean -sorted \
+	-g {input.fai} \
+	-a <(awk '{{if($2 > 1000000){{print $1"\t"0"\t"$2}}}}' {input.fai}) \
+	-b {input.bam}  \
+	> {output.cov}
+"""
 
 rule make_alns:
 	input:
 		bams=expand(rules.merge.output.bam,SM=SMS),
 		bais=expand(rules.merge.output.bai,SM=SMS),
+		covs=expand(rules.get_coverage.output.cov,SM=SMS),
 	output:
-		done="Targeted_HiFi_Asm/alignments/done.txt",
+		done="alignments/done.txt",
 	resources:
 		mem = 2,
 	threads: 1
@@ -176,43 +204,57 @@ rule fastq:
 		bam=ancient(rules.merge.output.bam),
 		bai=ancient(rules.merge.output.bai),
 	output:
-		bam=tempd("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.bam"),
-		fastq=tempd("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.fastq"),
+		bam=tempd("asm/{RGN}/temp/{SM}.bam"),
+		fastq=tempd("asm/{RGN}/temp/{SM}.fastq"),
+		fai=tempd("asm/{RGN}/temp/{SM}.fastq.fai"),
 	params:
 		rgn = get_rgn,
 	shell:"""
 #samtools merge -R {params.rgn} {output.bam} {input.bam}
 samtools view -b {input.bam} {params.rgn} > {output.bam}
 samtools fastq {output.bam} > {output.fastq}
+samtools faidx {output.fastq}
 """
 
 
 #
 # Run the local assembly 
 # 
-def get_region_size(wildcards):
-	RGN = str(wildcards.RGN)	
-	total = 0
-	for rgn in regions[RGN]:
-		tmp = rgn[2] - rgn[1]
-		#if(tmp > mmax): mmax = tmp
-		total += tmp
-	return(total)
+rule region_size:
+	input:
+		fastq = rules.fastq.output.fastq,
+		fai = rules.fastq.output.fai,
+		cov = rules.get_coverage.output.cov,
+	output:
+		size = temp( "asm/{RGN}/temp_{SM}_region_size.txt" ),
+	threads: 4
+	run:
+		fastq = pd.read_csv(input["fai"], sep="\t", names=["read", "length", "x", "y", "z", "w"])
+		cov =	pd.read_csv(input["cov"], sep="\t", names=["contig", "start", "end", "coverage"] )
+		total = fastq.length.sum()
+		median = cov.coverage.median()
+		size = int(1.5*total/median)
+		print(total/10**6, median, size)
+		out = open(output["size"],"w+")
+		out.write( "{}\n".format(size) )
+		out.close()
+
 
 def get_min_ovl(wildcards):
 	return(str(wildcards.MIN_OVL).lstrip("0") )
 
 rule canu_asm:
 	input:
-		rules.fastq.output.fastq,
+		fastq = rules.fastq.output.fastq,
+		fai = rules.fastq.output.fai,
+		size = rules.region_size.output.size,
 	output:
-		canu_dir = temp(directory("Targeted_HiFi_Asm/asm/{RGN}/canu_{SM}_{MIN_OVL}/")),
-		fasta = temp("Targeted_HiFi_Asm/asm/{RGN}/temp_{SM}_{MIN_OVL}.contigs.fasta"),
-		readNames = "Targeted_HiFi_Asm/asm/{RGN}/read_info/{SM}_{MIN_OVL}.readNames.txt",
-		readToTig = "Targeted_HiFi_Asm/asm/{RGN}/read_info/{SM}_{MIN_OVL}.layout.readToTig",
+		canu_dir = temp(directory("asm/{RGN}/canu_{SM}_{MIN_OVL}/")),
+		fasta = temp("asm/{RGN}/temp_{SM}_{MIN_OVL}.contigs.fasta"),
+		readNames = "asm/{RGN}/read_info/{SM}_{MIN_OVL}.readNames.txt",
+		readToTig = "asm/{RGN}/read_info/{SM}_{MIN_OVL}.layout.readToTig",
 	threads: 4
 	params:
-		gsize = get_region_size,
 		min_ovl = get_min_ovl, 
 	shell:'''
 canu \
@@ -220,12 +262,15 @@ canu \
     -p {wildcards.SM} \
     useGrid=false \
 	maxThreads={threads} \
-	genomeSize={params.gsize} \
-	batOptions="-eg 0.0 -eM 0.0 -mo {params.min_ovl} -dg 3 -db 3 -dr 1 -ca 50 -cp 5"  \
-    -pacbio-hifi {input} && \
+	genomeSize=$(cat {input.size}) \
+	batOptions="-eg 0.0 -eM 0.0 -mo {params.min_ovl} -dg 3 -db 3 -dr 1 -ca 50 -cp 5" \
+    -pacbio-hifi {input.fastq} && \
 	mv {output.canu_dir}/{wildcards.SM}.contigs.fasta {output.fasta} && \
     mv {output.canu_dir}/{wildcards.SM}.contigs.layout.readToTig {output.readToTig} && \
     mv {output.canu_dir}/{wildcards.SM}.seqStore/readNames.txt {output.readNames}
+
+#batOptions="-eg 0.0 -eM 0.0 -mo {params.min_ovl} -dg 3 -db 3 -dr 1 -ca 50 -cp 5"
+#batOptions="-eg 0.0003 -sb 0.01 -dg 0 -db 3 -dr 0 -ca 50 -cp 5 -mo {params.min_ovl}" 
 '''
 
 rule rename_asm:
@@ -236,9 +281,9 @@ rule rename_asm:
 		readNames = rules.canu_asm.output.readNames,
 		readToTig = rules.canu_asm.output.readToTig,
 	output:
-		fasta = "Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.contigs.fasta",
-		fai =   "Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.contigs.fasta.fai",
-		outdir = directory("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}/"),
+		fasta = "asm/{RGN}/temp/{SM}.{MIN_OVL}.contigs.fasta",
+		fai =   "asm/{RGN}/temp/{SM}.{MIN_OVL}.contigs.fasta.fai",
+		outdir = directory("asm/{RGN}/temp/{SM}.{MIN_OVL}/"),
 	run:
 		# get reads
 		recs = SeqIO.to_dict(SeqIO.parse(input["fastq"], "fastq"))
@@ -285,9 +330,9 @@ rule plots:
 		fai   = rules.rename_asm.output.fai,
 		outdir = rules.rename_asm.output.outdir, 
 	output:
-		png = "Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.png",
-		bam = temp("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.bam"),
-		bai = temp("Targeted_HiFi_Asm/asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.bam.bai"),
+		png = "asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.png",
+		bam = temp("asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.bam"),
+		bai = temp("asm/{RGN}/temp/{SM}.{MIN_OVL}.plots.bam.bai"),
 	threads: int(THREADS/4)
 	run:
 		reads = glob.glob(input["outdir"] + "/*.reads.fastq")
@@ -309,13 +354,13 @@ rule plots:
 
 rule pick_best_asm:
 	input:
-		fasta = expand("Targeted_HiFi_Asm/asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.contigs.fasta", MIN_OVL=MIN_OVLS),
-		fai = expand("Targeted_HiFi_Asm/asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.contigs.fasta.fai", MIN_OVL=MIN_OVLS),
-		png = expand("Targeted_HiFi_Asm/asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.plots.png", MIN_OVL=MIN_OVLS),
+		fasta = expand("asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.contigs.fasta", MIN_OVL=MIN_OVLS),
+		fai = expand("asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.contigs.fasta.fai", MIN_OVL=MIN_OVLS),
+		png = expand("asm/{{RGN}}/temp/{{SM}}.{MIN_OVL}.plots.png", MIN_OVL=MIN_OVLS),
 	output:
-		fasta = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.best.contigs.fasta",
-		fai = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.best.contigs.fasta.fai",
-		png = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.best.plots.png",
+		fasta = "asm/{RGN}/{SM}.best.contigs.fasta",
+		fai = "asm/{RGN}/{SM}.best.contigs.fasta.fai",
+		png = "asm/{RGN}/{SM}.best.plots.png",
 	threads: 1
 	run:
 		best=None
@@ -336,7 +381,7 @@ rule best_dot_plot:
 	input:
 		fasta = rules.pick_best_asm.output.fasta,
 	output:
-		pdf = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.pdf",
+		pdf = "asm/{RGN}/{SM}.pdf",
 	shell:"""
 python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotplots/dotplots/DotplotMain.py \
    	{input.fasta} -o {output.pdf} -w 100
@@ -351,7 +396,7 @@ rule stats:
 		png = expand(rules.pick_best_asm.output.png, SM=SMS, RGN=RGNS),
 		pdf = expand(rules.best_dot_plot.output.pdf, SM=SMS, RGN=RGNS)
 	output:
-		"Targeted_HiFi_Asm/assembly.stats.txt",
+		"assembly.stats.txt",
 	shell:"""
 head -n 100 {input.fai} > {output}
 """
@@ -369,8 +414,8 @@ rule dot_plot:
 	input:
 		get_asms,
 	output:
-		pdf = "Targeted_HiFi_Asm/dot_plot/{RGN}/{SM1}__{SM2}__{SM3}.pdf",
-		fasta = temp("Targeted_HiFi_Asm/dot_plot/{RGN}/{SM1}__{SM2}__{SM3}.fasta"),
+		pdf = "dot_plot/{RGN}/{SM1}__{SM2}__{SM3}.pdf",
+		fasta = temp("dot_plot/{RGN}/{SM1}__{SM2}__{SM3}.fasta"),
 	shell:"""
 cat {input}  > {output.fasta}
 python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotplots/dotplots/DotplotMain.py \
@@ -380,10 +425,10 @@ python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotpl
 
 rule dot_plots:
 	input:
-		pdfs = expand( "Targeted_HiFi_Asm/dot_plot/{RGN}/chm1__chm13__{SM}.pdf", RGN=RGNS, SM=SMS) 
-		#pdfs = [ "Targeted_HiFi_Asm/dot_plot/{SM1}__{SM2}__{SM3}.pdf".format(SM1=a,SM2=b,SM3=c) for a,b,c in itertools.combinations(sorted(SMS), 3) ]
+		pdfs = expand( "dot_plot/{RGN}/chm1__chm13__{SM}.pdf", RGN=RGNS, SM=SMS) 
+		#pdfs = [ "dot_plot/{SM1}__{SM2}__{SM3}.pdf".format(SM1=a,SM2=b,SM3=c) for a,b,c in itertools.combinations(sorted(SMS), 3) ]
 	output:
-		"Targeted_HiFi_Asm/dot_plot/done.txt"
+		"dot_plot/done.txt"
 	shell:"""
 touch {output}
 """
@@ -393,8 +438,8 @@ rule trf:
 	input:
 		fasta = rules.rename_asm.output.fasta,
 	output:
-		trf = "Targeted_HiFi_Asm/asm/{RGN}/{SM}.trf.txt",
-		tmptrf = temp("Targeted_HiFi_Asm/asm/{RGN}/tmp.{SM}.trf.txt"),
+		trf = "asm/{RGN}/{SM}.trf.txt",
+		tmptrf = temp("asm/{RGN}/tmp.{SM}.trf.txt"),
 	run:
 		shell("{TRF} {input.fasta} 2 7 7 80 10 50 2000 -ngs > {output.tmptrf}")
 		out = "\t".join('contig start end PeriodSize CopyNumber ConsensusSize PercentMatches PercentIndels Score A C G T Entropy Motif Sequence L_Flank R_Flank'.split() ) + "\n"
