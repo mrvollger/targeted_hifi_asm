@@ -164,7 +164,7 @@ rule get_coverage:
 	benchmark:
 		"logs/coverage_{SM}.b"
 	resources:
-		mem = 8,
+		mem = 64,
 	threads: 1
 	shell:"""
 bedtools coverage -bed -mean -sorted \
