@@ -390,16 +390,16 @@ python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotpl
 
 
 rule stats:	
-	input:
-		fasta = expand(rules.pick_best_asm.output.fasta, SM=SMS, RGN=RGNS),
-		fai = expand(rules.pick_best_asm.output.fai, SM=SMS, RGN=RGNS),
-		png = expand(rules.pick_best_asm.output.png, SM=SMS, RGN=RGNS),
-		pdf = expand(rules.best_dot_plot.output.pdf, SM=SMS, RGN=RGNS)
-	output:
-		"assembly.stats.txt",
-	shell:"""
+    input:
+        fasta = expand(rules.pick_best_asm.output.fasta, SM=SMS, RGN=RGNS),
+        fai = expand(rules.pick_best_asm.output.fai, SM=SMS, RGN=RGNS),
+        png = expand(rules.pick_best_asm.output.png, SM=SMS, RGN=RGNS),
+    output:
+        "assembly.stats.txt",
+    shell:"""
 head -n 100 {input.fai} > {output}
 """
+#pdf = expand(rules.best_dot_plot.output.pdf, SM=SMS, RGN=RGNS)
 
 
 
