@@ -78,6 +78,9 @@ for idx,row in df.iterrows():
 TRIO_SMS = list(TRIOS.keys())
 PARENTS = ["pat", "mat"]
 
+print(TRIO_SMS,len(TRIO_SMS))
+print(SMS, len(SMS))
+
 #
 # setup working dir
 #
@@ -181,16 +184,16 @@ rule get_coverage:
 	shell:"""
 bedtools coverage -bed -mean -sorted \
 	-g {input.fai} \
-	-a <(awk '{{if($2 > 1000000){{print $1"\t"0"\t"$2}}}}' {input.fai}) \
+	-a <(awk '{{if($2 > 1000000){{print $1"\t"0"\t"1000000}}}}' {input.fai}) \
 	-b {input.bam}  \
 	> {output.cov}
 """
 
 rule make_alns:
 	input:
-		bams=expand(rules.merge.output.bam,SM=SMS),
-		bais=expand(rules.merge.output.bai,SM=SMS),
-		covs=expand(rules.get_coverage.output.cov,SM=SMS),
+		bams=expand(rules.merge.output.bam,SM=SMS+TRIO_SMS),
+		bais=expand(rules.merge.output.bai,SM=SMS+TRIO_SMS),
+		covs=expand(rules.get_coverage.output.cov,SM=SMS+TRIO_SMS),
 	output:
 		done="alignments/done.txt",
 	resources:
