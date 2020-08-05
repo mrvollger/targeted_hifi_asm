@@ -37,6 +37,13 @@ chr1    119989248       120163868       NOTCH2
 snakemake -s TAT.smk -j 120 
 ```
 
+### avoid rerunning alignments
+Consider softlinking the following dirs. This will avoid recalculation of the alignments and yak profiles. This will sapce time and space.
+```
+mkdir -p TAT_Asm
+ln -s /net/eichler/vol26/projects/chm13_t2t/nobackups/TAT_assemblies/TAT_Asm/yak TAT_Asm/.
+ln -s /net/eichler/vol26/projects/chm13_t2t/nobackups/TAT_assemblies/TAT_Asm/alignments TAT_Asm/.
+```
 
 
 
