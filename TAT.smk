@@ -443,13 +443,13 @@ rule yak_reads:
     input:
         reads = get_parent, 
     output:
-        reads = temp("yak/{SM}.{PAR}.reads"),
-    threads: 4
+        reads = temp("yak/{SM}.{PAR}.reads.gz"),
+    threads: 16
     run:
         if(input.reads[-5:] == ".cram"):
-            shell("samtools fasta -@ {threads} {input.reads} > {output.reads}")
+            shell("samtools fasta -@ {threads} {input.reads} | pigz -p {threads} > {output.reads}")
         elif(input.reads[-4:] == ".bam"):
-            shell("samtools fasta -@ {threads} {input.reads} > {output.reads}")
+            shell("samtools fasta -@ {threads} {input.reads} | pigz -p {threads}  > {output.reads}")
         elif(input.reads[-9:] == ".fastq.gz"):
             shell("ln -s {input.reads} {output.reads}")
         else:
