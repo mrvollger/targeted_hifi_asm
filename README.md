@@ -1,5 +1,47 @@
-# targeted_hifi_asm
+# Targeted Assembly with Trios (TAT)
 
+## Example config file
+Must be named `TAT.yaml`
+```
+ref: /net/eichler/vol26/projects/sda_assemblies/nobackups/assemblies/hg38/ucsc.hg38.no_alts.fasta
+regions: regions.bed
+threads: 16
+minovls:
+    - 1000
+samples: samples.tbl
+```
+### Example sample table
+`samples.tbl` must be a tab seperated table with 4 columns that looks like:
+```
+sample  fofn    pat     mat
+HG00735 HG00735.fofn    HG01047.final.cram   HG00734.final.cram
+Clint_PTR   clint.fofn      
+```
+If the mat or pat illumina reads are missing a non trio binned assembly will be done
+
+### Example region file
+Must have contig, start, and end. If you include a 4th row it uses it as a region name. If multiple rows have the same region name reads from all the regions are grouped together and assembled. 
+
+```
+chr6    160494344       160686570       LPA
+chr7    100945872       100972010
+chr1    146081967       146328717       NOTCH2
+chr1    148532846       148779515       NOTCH2
+chr1    120705588       120836006       NOTCH2
+chr1    149366551       149480964       NOTCH2
+chr1    119989248       120163868       NOTCH2
+```
+
+## example run command
+```
+snakemake -s TAT.smk -j 120 
+```
+
+
+
+
+
+# Old pipeline with sperated trio and non trio runs
 
 ## Example config file
 Must be named `targeted_hifi_asm.yaml`
@@ -29,9 +71,6 @@ chr1    120705588       120836006       NOTCH2
 chr1    149366551       149480964       NOTCH2
 chr1    119989248       120163868       NOTCH2
 ```
-ref: /net/eichler/vol26/projects/sda_assemblies/nobackups/assemblies/hg38/ucsc.hg38.no_alts.fasta
-regions: regions.50kbp.slop.bed
-threads: 8
 
 
 ## Example config for targeted trio assembly ##

@@ -10,8 +10,6 @@ import pandas as pd
 SCRIPTS = os.path.dirname(workflow.snakefile) + "/scripts"
 ENV = os.path.dirname(workflow.snakefile) + "/env.cfg"
 shell.prefix("source {ENV}; set -eo pipefail; ")
-YAK="/net/eichler/vol26/projects/koren_hifi_asm/nobackups/heng_hifiasm/yak/yak"
-HIFIASM="/net/eichler/vol26/projects/koren_hifi_asm/nobackups/heng_hifiasm/hifiasm/hifiasm"
 TRF="/net/eichler/vol26/projects/sda_assemblies/nobackups/software/SDA/externalRepos/trf-v4.09/bin/trf"
 
 
@@ -31,12 +29,8 @@ else:
 
 configfile: "TAT.yaml"
 
-
-# define the samples 
-SMS=list(config.keys())
-
 # define ref
-REF=config["ref"]; SMS.remove("ref")
+REF=config["ref"]
 
 # define the regions 
 regions = {}
@@ -50,21 +44,19 @@ for line in open(config["regions"]):
 		key = t[3]	
 	regions.setdefault(key, [])
 	regions[key].append( (t[0], int(t[1]), int(t[2])) )
-
 RGNS = list(regions.keys())
-SMS.remove("regions")
 
 # set up max threads
 THREADS=16 
-if("threads" in SMS): THREADS=config["threads"]; SMS.remove("threads")
+if("threads" in config): THREADS=config["threads"]
 
 # set up min asm length 
 MIN_ASM_LEN=25000
-if("minasmlen" in SMS): MIN_ASM_LEN=config["minasmlen"]; SMS.remove("minasmlen")
+if("minasmlen" in config): MIN_ASM_LEN=config["minasmlen"]
 
 # set up minimum overlaps 
 MIN_OVLS=[2000]
-if("minovls" in SMS): MIN_OVLS = config["minovls"]; SMS.remove("minovls")
+if("minovls" in config): MIN_OVLS = config["minovls"]
 
 
 #
@@ -108,6 +100,8 @@ wildcard_constraints:
 	SM2="|".join(SMS),
 	SM3="|".join(SMS),
 	PAR = "|".join(PARENTS),
+
+localrules: get_coverage, yak, yak_reads, 
 
 rule all:
     input:
@@ -395,17 +389,6 @@ rule pick_best_asm:
 		shell(f"ln {best[1]} {{output.fai}}")
 		shell(f"ln {best[2]} {{output.png}}")
 
-rule best_dot_plot:
-	input:
-		fasta = rules.pick_best_asm.output.fasta,
-	output:
-		pdf = "asm/{RGN}/{SM}.pdf",
-	shell:"""
-python /net/eichler/vol27/projects/ruiyang_projects/nobackups/vntr_project/dotplots/dotplots/DotplotMain.py \
-   	{input.fasta} -o {output.pdf} -w 100
-"""
-
-
 
 rule stats:	
     input:
@@ -440,7 +423,6 @@ rule trf:
 		open(output["trf"], "w+").write(out)	
 
 
-
 rule merge_trf:
 	input:
 		expand(rules.trf.output.trf, SM=SMS, RGN=RGNS)
@@ -448,9 +430,11 @@ rule merge_trf:
 
 
 
-
-
-
+#########################################
+#########################################
+######### TRIO ASSEMBLY #################
+#########################################
+#########################################
 
 def get_parent(wc):
     return(TRIOS[wc.SM][wc.PAR])
@@ -476,10 +460,14 @@ rule yak:
 		reads = rules.yak_reads.output.reads, 
 	output:
 		yak = protected("yak/{SM}.{PAR}.yak"),
-	threads: 32
+	threads: 16
 	shell:"""
-{YAK} count -K 1000000000 -k31 -b37 -t{threads} -o {output.yak} {input.reads}
+yak count -K 1000000000 -k31 -b37 -t{threads} -o {output.yak} {input.reads}
 """
+
+rule make_yaks:
+    input:
+        yaks = expand("yak/{SM}.{PAR}.yak", SM=TRIO_SMS, PAR=PARENTS),
 
 
 def get_mat(wc):
@@ -498,18 +486,18 @@ rule hifiasm:
 		mat_yak = get_mat,
 		pat_yak = get_pat,
 	output:
-		dipy = "asm/{RGN}/{SM}.asm.dip.r_utg.gfa",
-		dipn = "asm/{RGN}/{SM}.asm.dip.r_utg.noseq.gfa",
-		hap1 = "asm/{RGN}/{SM}.asm.hap1.p_ctg.gfa",
-		hap1n = "asm/{RGN}/{SM}.asm.hap1.p_ctg.noseq.gfa",
-		hap2 = "asm/{RGN}/{SM}.asm.hap2.p_ctg.gfa",
-		hap2n = "asm/{RGN}/{SM}.asm.hap2.p_ctg.noseq.gfa",
-		ec = "asm/{RGN}/{SM}.asm.ec.bin",
-		reverse = "asm/{RGN}/{SM}.asm.ovlp.reverse.bin",
-		source = "asm/{RGN}/{SM}.asm.ovlp.source.bin",
+		dipy = temp("asm/{RGN}/{SM}.asm.dip.r_utg.gfa"),
+		dipn = temp("asm/{RGN}/{SM}.asm.dip.r_utg.noseq.gfa"),
+		hap1 = temp("asm/{RGN}/{SM}.asm.hap1.p_ctg.gfa"),
+		hap1n = temp("asm/{RGN}/{SM}.asm.hap1.p_ctg.noseq.gfa"),
+		hap2 = temp("asm/{RGN}/{SM}.asm.hap2.p_ctg.gfa"),
+		hap2n = temp("asm/{RGN}/{SM}.asm.hap2.p_ctg.noseq.gfa"),
+		ec = temp("asm/{RGN}/{SM}.asm.ec.bin"),
+		reverse = temp("asm/{RGN}/{SM}.asm.ovlp.reverse.bin"),
+		source = temp("asm/{RGN}/{SM}.asm.ovlp.source.bin"),
 	threads: THREADS
 	shell:"""
-{HIFIASM} -o asm/{wildcards.RGN}/{wildcards.SM}.asm -t {threads} \
+hifiasm -o asm/{wildcards.RGN}/{wildcards.SM}.asm -t {threads} \
 	-1 {input.mat_yak} -2 {input.pat_yak} {input.hifi}
 """
 
