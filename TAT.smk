@@ -8,6 +8,7 @@ import glob
 import pandas as pd
 
 SCRIPTS = os.path.dirname(workflow.snakefile) + "/scripts"
+BIN = os.path.dirname(workflow.snakefile) + "/bin"
 ENV = os.path.dirname(workflow.snakefile) + "/env.cfg"
 shell.prefix("source {ENV}; set -eo pipefail; ")
 TRF="/net/eichler/vol26/projects/sda_assemblies/nobackups/software/SDA/externalRepos/trf-v4.09/bin/trf"
@@ -31,6 +32,8 @@ configfile: "TAT.yaml"
 
 # define ref
 REF=config["ref"]
+
+if("gff" in config): GFF  = config["gff"]
 
 # define the regions 
 regions = {}
@@ -155,44 +158,43 @@ def get_bams(wildcards):
         return(bams)
 
 rule merge:
-	input:
-		bams = get_bams,
-	output:
-		bam=protected("alignments/{SM}.bam"),
-		bai=protected("alignments/{SM}.bam.bai"),
-	benchmark:
-		"logs/merge_{SM}.b"
-	resources:
-		mem = 2,
-	threads: min(16, THREADS)
-	shell:"""
-samtools merge -@ {threads} {output.bam} {input.bams} && samtools index {output.bam}
+    input:
+        ref=REF,
+        bams = get_bams,
+    output:
+        cram=protected("alignments/{SM}.cram"),
+        crai=protected("alignments/{SM}.cram.crai"),
+    benchmark:
+        "logs/merge_{SM}.b"
+    resources:
+        mem = 2,
+    threads: min(16, THREADS)
+    shell:"""
+samtools merge -@ {threads} --write-index --reference {input.ref} -O CRAM -f {output.cram} {input.bams}
 """
 
 rule get_coverage:
 	input:
-		bam = rules.merge.output.bam,
-		bai = rules.merge.output.bai,
+		cram = rules.merge.output.cram,
+		crai = rules.merge.output.crai,
 		fai = REF + ".fai",
+		ref = REF,
 	output:
-		cov = protected("alignments/{SM}.coverage.tbl"),
+		cov = "alignments/{SM}.mosdepth.summary.txt",
+		dist = temp("alignments/{SM}.mosdepth.global.dist.txt"),
 	benchmark:
 		"logs/coverage_{SM}.b"
 	resources:
-		mem = 64,
-	threads: 1
+		mem = 8,
+	threads: 4
 	shell:"""
-bedtools coverage -bed -mean -sorted \
-	-g {input.fai} \
-	-a <(awk '{{if($2 > 1000000){{print $1"\t"0"\t"1000000}}}}' {input.fai}) \
-	-b {input.bam}  \
-	> {output.cov}
+{BIN}/mosdepth -f {input.ref} -t {threads} -x -n alignments/{wildcards.SM} {input.cram}
 """
 
 rule make_alns:
 	input:
-		bams=expand(rules.merge.output.bam,SM=SMS+TRIO_SMS),
-		bais=expand(rules.merge.output.bai,SM=SMS+TRIO_SMS),
+		crams=expand(rules.merge.output.cram,SM=SMS+TRIO_SMS),
+		crais=expand(rules.merge.output.crai,SM=SMS+TRIO_SMS),
 		covs=expand(rules.get_coverage.output.cov,SM=SMS+TRIO_SMS),
 	output:
 		done="alignments/done.txt",
@@ -216,8 +218,8 @@ def get_rgn(wildcards):
 
 rule fastq:
 	input:
-		bam=ancient(rules.merge.output.bam),
-		bai=ancient(rules.merge.output.bai),
+		cram=ancient(rules.merge.output.cram),
+		crai=ancient(rules.merge.output.crai),
 	output:
 		bam=tempd("asm/{RGN}/temp/{SM}.bam"),
 		fastq=tempd("asm/{RGN}/temp/{SM}.fastq"),
@@ -225,8 +227,7 @@ rule fastq:
 	params:
 		rgn = get_rgn,
 	shell:"""
-#samtools merge -R {params.rgn} {output.bam} {input.bam}
-samtools view -b {input.bam} {params.rgn} > {output.bam}
+samtools view -b {input.cram} {params.rgn} > {output.bam}
 samtools fastq {output.bam} > {output.fastq}
 samtools faidx {output.fastq}
 """
@@ -241,13 +242,13 @@ rule region_size:
 		fai = rules.fastq.output.fai,
 		cov = rules.get_coverage.output.cov,
 	output:
-		size = temp( "asm/{RGN}/temp_{SM}_region_size.txt" ),
+		gsize = temp( "asm/{RGN}/temp_{SM}_region_size.txt" ),
 	threads: 4
 	run:
 		fastq = pd.read_csv(input["fai"], sep="\t", names=["read", "length", "x", "y", "z", "w"])
-		cov =	pd.read_csv(input["cov"], sep="\t", names=["contig", "start", "end", "coverage"] )
+		cov =	pd.read_csv(input["cov"], sep="\t")
 		total = fastq.length.sum()
-		median = cov.coverage.median()
+		median = cov["mean"].median()
 		size = int(1.5*total/median)
 		print(total/10**6, median, size)
 		out = open(output["size"],"w+")
@@ -262,7 +263,7 @@ rule canu_asm:
 	input:
 		fastq = rules.fastq.output.fastq,
 		fai = rules.fastq.output.fai,
-		size = rules.region_size.output.size,
+		gsize = rules.region_size.output.gsize,
 	output:
 		canu_dir = temp(directory("asm/{RGN}/canu_{SM}_{MIN_OVL}/")),
 		fasta = temp("asm/{RGN}/temp_{SM}_{MIN_OVL}.contigs.fasta"),
@@ -277,7 +278,7 @@ canu \
     -p {wildcards.SM} \
     useGrid=false \
 	maxThreads={threads} \
-	genomeSize=$(cat {input.size}) \
+	genomeSize=$(cat {input.gsize}) \
 	batOptions="-eg 0.0 -eM 0.0 -mo {params.min_ovl} -dg 3 -db 3 -dr 1 -ca 50 -cp 5" \
     -pacbio-hifi {input.fastq} && \
 	mv {output.canu_dir}/{wildcards.SM}.contigs.fasta {output.fasta} && \
@@ -496,7 +497,7 @@ rule hifiasm:
 		hap2 = temp("asm/{RGN}/{SM}.asm.hap2.p_ctg.gfa"),
 		hap2n = temp("asm/{RGN}/{SM}.asm.hap2.p_ctg.noseq.gfa"),
 		ec = temp("asm/{RGN}/{SM}.asm.ec.bin"),
-		reverse = temp("asm/{RGN}/{SM}.asm.ovlp.reverse.bin"),
+		hreverse = temp("asm/{RGN}/{SM}.asm.ovlp.reverse.bin"),
 		source = temp("asm/{RGN}/{SM}.asm.ovlp.source.bin"),
 	threads: THREADS
 	shell:"""
@@ -541,6 +542,13 @@ samtools index {output.bam}
 """
 
 
+def get_asms(wc):
+    if(wc.SM in TRIO_SMS):
+        return()
+    else:
+        return()
+
+
 rule map_to_ref:
 	input:
 		ref = REF,
@@ -550,12 +558,95 @@ rule map_to_ref:
 		bed = "asm/{RGN}/{SM}.to_ref.bed",
 	threads:THREADS
 	shell:"""
-minimap2 --eqx -Y -ax asm20 -t {threads} -r 50000 \
+minimap2 -R '@RG\tID:{wildcards.SM}_ID\tSM:{wildcards.SM}' --eqx -Y -ax asm20 -t {threads} -r 50000 \
 	{input.ref} {input.fasta} | samtools view -F 260 -u - | samtools sort - > {output.bam}
 
 samtools index {output.bam}
-~/projects/hifi_asm/scripts/samIdentity.py --bed {output.bam} > {output.bed}
+~mvollger/projects/hifi_asm/scripts/samIdentity.py --bed {output.bam} > {output.bed}
 """
+
+
+
+#################################################################3
+# LIFTOFF
+#################################################################3
+
+
+rule liftoff:
+    input:
+        r = REF,
+        gff = GFF,
+        t = rules.nucplot.output.fasta,
+    output:
+        gff = "genes/{SM}.gff3",
+        unmapped = "genes/{SM}.unmapped.gff3",
+        temp = directory('genes/temp.{SM}')
+    params:
+        rgn=get_rgn
+    threads: 32
+    resources:
+        mem=8,
+    shell:"""
+~mvollger/.local/bin/liftoff -dir {output.temp} -sc 0.95 -copies -p {threads} -r {input.r} -t {input.t} -g {input.gff} -o {output.gff} -u {output.unmapped}
+"""
+
+
+rule orf_gff:
+    input:
+        gff = rules.liftoff.output.gff,
+        fasta =  rules.nucplot.output.fasta,
+    output:
+        gff="genes/{SM}.orf_only.gff3",
+    threads: 1
+    resources:
+        mem=8,
+    shell:"""
+gffread --adj-stop -C -F -g {input.fasta} {input.gff} \
+        | gffread --keep-comments -F -J -g {input.fasta} /dev/stdin \
+        | gffread --keep-comments -F -M -K /dev/stdin \
+        > {output.gff}
+"""
+
+rule orf_bb:
+    input:
+        gff = rules.orf_gff.output.gff,
+        fai = rules.nucplot.output.fasta+".fai",
+    output:
+        bb="genes/{SM}.orf_only.bb",
+        bed="genes/{SM}.orf_only.bed",
+    threads: 1
+    resources:
+        mem=8,
+    shell:"""
+{SDIR}/scripts/AddUniqueGeneIDs.py {input.gff} | \
+        gff3ToGenePred -geneNameAttr=gene_name -useName /dev/stdin /dev/stdout | \
+        genePredToBigGenePred /dev/stdin /dev/stdout | \
+        awk -F $'\t' '{{ t = $4; $4 = $13; $13 = t; print; }}' OFS=$'\t' | \
+        bedtools sort -i - > {output.bed} 
+
+bedToBigBed -extraIndex=name,name2 -type=bed12+7 -tab -as={SDIR}/templates/bigGenePred.as {output.bed} {input.fai} {output.bb}
+"""
+
+rule gff_index:
+	input:
+		rules.liftoff.output.gff
+	output:
+		gff = "genes/{SM}.gff3.gz",
+		tbi = "genes/{SM}.gff3.gz.tbi",
+	threads: 1
+	resources:
+		mem=8,
+	shell:'''
+bedtools sort -i {input} | bgzip > {output.gff}
+tabix {output.gff}
+'''
+
+rule genes:
+	input:
+		gffs = expand(rules.gff_index.output.gff, SM=[SM]),
+		orf = expand(rules.orf_gff.output, SM=[SM]),
+		bbs = expand(rules.orf_bb.output, SM=[SM]),
+
 
 
 
